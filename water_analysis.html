@@ -1,152 +1,161 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Volve Field Water Analysis</title>
-    
-    <!-- FIXED: Correct working CDN scripts for Plotly and PapaParse -->
-    <script src="https://plot.ly"></script>
-    <script src="https://jsdelivr.net"></script>
-    
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; background: #f4f4f4; }
-        h1 { color: #003366; }
-        select { padding: 8px; font-size: 14px; margin-bottom: 20px; }
-        .dashboard { display: flex; gap: 15px; margin-bottom: 30px; flex-wrap: wrap; }
-        .card { background: white; padding: 15px; border-radius: 8px; width: 220px; box-shadow: 0 2px 5px rgba(0,0,0,0.15); }
-        .card h3 { margin-top: 0; color: #003366; }
-        #prodPlot, #chanPlot { background: white; border-radius: 8px; padding: 10px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-    </style>
+
+    <!-- Pinned versions: "plotly-latest" is frozen at v1.58.5 (2021) and logs a warning -->
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+    <script src="common.js"></script>
+    <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
 
+<nav>
+    <a href="index.html">Well Review</a>
+    <a href="water_analysis.html" class="active">Water Analysis</a>
+    <a href="stimulation_screening.html">Stimulation Screening</a>
+</nav>
+
 <h1>Volve Field Water Analysis</h1>
+
+<div id="errorBox"></div>
 
 <label><b>Select Well:</b></label>
 <select id="wellSelector"></select>
 
 <div class="dashboard">
-    <div class="card"> <h3>Well</h3> <p id="wellName">Loading...</p> </div>
-    <div class="card"> <h3>Peak Water</h3> <p id="peakWater">-</p> </div>
-    <div class="card"> <h3>Current Water</h3> <p id="currentWater">-</p> </div>
-    <div class="card"> <h3>Cumulative Water</h3> <p id="cumWater">-</p> </div>
-    <div class="card"> <h3>Current Water Cut</h3> <p id="currentWaterCut">-</p> </div>
-    <div class="card"> <h3>Field Water</h3> <p id="fieldWater">-</p> </div>
+    <div class="card"><h3>Well</h3><p id="wellName">Loading...</p></div>
+    <div class="card"><h3>Peak Water</h3><p id="peakWater">-</p></div>
+    <div class="card"><h3>Current Water</h3><p id="currentWater">-</p></div>
+    <div class="card"><h3>Cumulative Water</h3><p id="cumWater">-</p></div>
+    <div class="card"><h3>Current Water Cut</h3><p id="currentWaterCut">-</p></div>
+    <div class="card"><h3>Field Water</h3><p id="fieldWater">-</p></div>
 </div>
 
 <!-- Production Rate Chart -->
-<div id="prodPlot"></div>
+<div id="prodPlot" class="plot"></div>
 
-<!-- NEW: Chan Diagnostic Breakdown Chart Container -->
-<div id="chanPlot"></div>
+<!-- Chan Diagnostic Chart -->
+<div id="chanPlot" class="plot"></div>
+<p class="note">Chan plot method: Chan, K.S. (1995), "Water Control Diagnostic Plots", SPE 30775.
+WOR = water/oil on days with both phases flowing; time is cumulative producing days.
+WOR' = dWOR/dt from a centred difference over &plusmn;15 producing days on a 31-day moving average of WOR,
+so daily noise does not swamp the trend. Negative WOR' values are omitted because a log axis cannot show them.
+A rising WOR' with positive slope suggests coning or channelling; a flat or falling WOR' suggests normal
+displacement.</p>
+
+<footer>Data: Volve field daily production, Equinor open data release.</footer>
 
 <script>
-const SM3_TO_BBL = 6.2898;
 let allRows = [];
 
-Papa.parse("volvedatacsv.csv", {
-    download: true,
-    header: true,
-    complete: function(results) {
-        allRows = results.data.filter(row => row.NPD_WELL_BORE_NAME && row.DATEPRD);
-        const wells = [...new Set(allRows.map(r => r.NPD_WELL_BORE_NAME))].sort();
-        const selector = document.getElementById("wellSelector");
-        
-        wells.forEach(well => {
-            const option = document.createElement("option");
-            option.value = well; option.text = well;
-            selector.appendChild(option);
-        });
-
-        calculateFieldKPIs();
-        selector.addEventListener("change", function() { updateWell(this.value); });
-        if(wells.length > 0) updateWell(wells[0]);
-    }
+loadProduction(function(rows) {
+    allRows = rows;
+    try { calculateFieldKPIs(); } catch (e) { console.error(e); }
+    setupWellSelector(allRows, updateWell);
 });
 
-function calculateFieldKPIs(){
-    const sortedDates = allRows.map(r => r.DATEPRD).filter(Boolean).sort();
-    if (sortedDates.length === 0) return;
-    const latestDate = sortedDates[sortedDates.length - 1];
-    const latestRows = allRows.filter(r => r.DATEPRD === latestDate);
-
-    const fieldWater = latestRows.reduce((sum, r) => sum + ((Number(r.BORE_WAT_VOL) || 0) * SM3_TO_BBL), 0);
-    document.getElementById("fieldWater").innerText = fieldWater.toFixed(0) + " BWPD";
+function calculateFieldKPIs() {
+    const latest = latestProducingTime(allRows);
+    const fieldWater = allRows
+        .filter(r => r.t === latest)
+        .reduce((sum, r) => sum + r.water * SM3_TO_BBL, 0);
+    document.getElementById("fieldWater").innerHTML = fmt(fieldWater, 0) + " BWPD" + asOf(latest);
 }
 
-function updateWell(wellName){
-    // FIXED: Chronologically sort data array to make sure mathematical slopes track correctly over time
-    const wellData = allRows.filter(r => r.NPD_WELL_BORE_NAME === wellName)
-                           .sort((a, b) => new Date(a.DATEPRD) - new Date(b.DATEPRD));
-    if(wellData.length === 0) return;
+function updateWell(wellName) {
+    const wellData = allRows.filter(r => r.well === wellName);
+    if (wellData.length === 0) return;
 
-    const dates = wellData.map(r => r.DATEPRD);
-    const water = wellData.map(r => (Number(r.BORE_WAT_VOL) || 0) * SM3_TO_BBL);
-    const oil = wellData.map(r => (Number(r.BORE_OIL_VOL) || 0) * SM3_TO_BBL);
+    // Real dates (not strings) so Plotly draws a time axis
+    const dates = wellData.map(r => isoDate(r.t));
+    const water = wellData.map(r => r.water * SM3_TO_BBL);
 
-    const waterCut = wellData.map(r => {
-        const w = (Number(r.BORE_WAT_VOL) || 0);
-        const o = (Number(r.BORE_OIL_VOL) || 0);
-        return (o + w) > 0 ? (w / (o + w)) * 100 : 0;
-    });
+    // Water cut is undefined on shut-in days: leave a gap instead of plotting a false 0 %
+    const waterCut = wellData.map(r => isProducing(r) ? (r.water / (r.oil + r.water)) * 100 : null);
 
-    const totalWater = water.reduce((sum, val) => sum + val, 0);
-    let maxWater = 0;
-    for (let i = 0; i < water.length; i++) { if (water[i] > maxWater) maxWater = water[i]; }
+    const totalWater = water.reduce((sum, v) => sum + v, 0);
+    const maxWater = water.reduce((m, v) => v > m ? v : m, 0);
+
+    // "Current" = last day the well flowed, not the last row (often a shut-in day)
+    const producing = wellData.filter(isProducing);
+    const last = producing[producing.length - 1];
 
     document.getElementById("wellName").innerText = wellName;
-    document.getElementById("peakWater").innerText = maxWater.toFixed(0) + " BWPD";
-    document.getElementById("currentWater").innerText = water[water.length - 1].toFixed(0) + " BWPD";
-    document.getElementById("cumWater").innerText = (totalWater / 1000000).toFixed(2) + " MM bbls";
-    document.getElementById("currentWaterCut").innerText = waterCut[waterCut.length - 1].toFixed(1) + " %";
+    document.getElementById("peakWater").innerText = fmt(maxWater, 0) + " BWPD";
+    document.getElementById("cumWater").innerText = fmt(totalWater / 1e6, 2) + " MM bbls";
 
-    // --- Chart 1: Time Series Production ---
-    const waterRateTrace = { x: dates, y: water, name: "Water Rate (BWPD)", type: 'scatter', line: { color: "blue", width: 2 } };
-    const waterCutTrace = { x: dates, y: waterCut, name: "Water Cut (%)", type: 'scatter', yaxis: "y2", line: { color: "lightblue", width: 2, dash: "dash" } };
-
-    Plotly.newPlot("prodPlot", [waterRateTrace, waterCutTrace], {
-        title: wellName + " Water Production Diagnostics",
-        hovermode: "x unified",
-        yaxis: { title: "Water Production Rate (BWPD)", titlefont: { color: "blue" }, tickfont: { color: "blue" } },
-        yaxis2: { title: "Water Cut (%)", titlefont: { color: "darkblue" }, tickfont: { color: "darkblue" }, overlaying: "y", side: "right", range: [0, 100] }
-    });
-
-    // --- NEW: Calculate Log-Log Chan Diagnostics (WOR and WOR Derivative) ---
-    const wor = [];
-    const worDeriv = [];
-    const elapsedDays = [];
-    let dayCount = 0;
-
-    for (let i = 0; i < water.length; i++) {
-        // Only calculate when there is actual production history to prevent dividing by zero or plotting empty data points
-        if (oil[i] > 0 && water[i] > 0) {
-            dayCount++;
-            const currentWOR = water[i] / oil[i];
-            wor.push(currentWOR);
-            elapsedDays.push(dayCount);
-
-            // Numerical slope calculation for WOR Derivative: d(WOR)/dt
-            if (wor.length > 1) {
-                const dWOR = currentWOR - wor[wor.length - 2];
-                // Logarithmic plots reject negative numbers, so zero out noise parameters cleanly
-                worDeriv.push(dWOR > 0 ? dWOR : null);
-            } else {
-                worDeriv.push(null);
-            }
-        }
+    if (last) {
+        const lastCut = (last.water / (last.oil + last.water)) * 100;
+        document.getElementById("currentWater").innerHTML = fmt(last.water * SM3_TO_BBL, 0) + " BWPD" + asOf(last.t);
+        document.getElementById("currentWaterCut").innerHTML = fmt(lastCut, 1) + " %" + asOf(last.t);
+    } else {
+        document.getElementById("currentWater").innerText = "No production";
+        document.getElementById("currentWaterCut").innerText = "-";
     }
 
-    // --- Chart 2: Chan Plot Configuration ---
-    const worTrace = { x: elapsedDays, y: wor, name: "WOR", type: 'scatter', mode: 'lines', line: { color: "navy", width: 2 } };
-    const derivTrace = { x: elapsedDays, y: worDeriv, name: "WOR Derivative", type: 'scatter', mode: 'markers+lines', marker: { size: 4 }, line: { color: "crimson", width: 1.5, dash: 'dot' } };
+    // --- Chart 1: Time Series Production ---
+    const waterRateTrace = { x: dates, y: water, name: "Water Rate (BWPD)", type: "scatter", line: { color: "blue", width: 2 } };
+    const waterCutTrace = { x: dates, y: waterCut, name: "Water Cut (%)", type: "scatter", yaxis: "y2", connectgaps: false, line: { color: "lightblue", width: 2, dash: "dash" } };
+
+    Plotly.newPlot("prodPlot", [waterRateTrace, waterCutTrace], {
+        title: { text: wellName + " Water Production Diagnostics" },
+        hovermode: "x unified",
+        xaxis: { type: "date" },
+        yaxis: { title: { text: "Water Production Rate (BWPD)", font: { color: "blue" } }, tickfont: { color: "blue" } },
+        yaxis2: { title: { text: "Water Cut (%)", font: { color: "darkblue" } }, tickfont: { color: "darkblue" }, overlaying: "y", side: "right", range: [0, 100] },
+        legend: { orientation: "h", y: -0.15 }
+    });
+
+    drawChanPlot(wellName, wellData);
+}
+
+// Chan (1995) water-oil ratio diagnostic on log-log axes
+function drawChanPlot(wellName, wellData) {
+    const flowing = wellData.filter(r => r.oil > 0 && r.water > 0);
+    const days = flowing.map((r, i) => i + 1);
+    const wor = flowing.map(r => r.water / r.oil);
+
+    const AVG = 15;   // half-window for the moving average
+    const DIFF = 15;  // half-window for the centred difference
+    const smooth = wor.map((_, i) => {
+        const a = Math.max(0, i - AVG), b = Math.min(wor.length - 1, i + AVG);
+        let s = 0;
+        for (let j = a; j <= b; j++) s += wor[j];
+        return s / (b - a + 1);
+    });
+    const worDeriv = smooth.map((_, i) => {
+        if (i < DIFF || i + DIFF >= smooth.length) return null;
+        const d = (smooth[i + DIFF] - smooth[i - DIFF]) / (days[i + DIFF] - days[i - DIFF]);
+        return d > 0 ? d : null;
+    });
+
+    if (flowing.length < 2 * DIFF + 1) {
+        Plotly.newPlot("chanPlot", [], {
+            title: { text: wellName + " Water Breakthrough Diagnostics (Chan Log-Log Plot)" },
+            annotations: [{ text: "Not enough days with both oil and water flowing", showarrow: false, xref: "paper", yref: "paper", x: 0.5, y: 0.5 }],
+            xaxis: { visible: false }, yaxis: { visible: false }
+        });
+        return;
+    }
+
+    const worTrace = { x: days, y: wor, name: "WOR", type: "scatter", mode: "lines", line: { color: "navy", width: 1.5 } };
+    const derivTrace = { x: days, y: worDeriv, name: "WOR' (per day)", type: "scatter", mode: "markers", marker: { size: 3, color: "crimson" } };
 
     Plotly.newPlot("chanPlot", [worTrace, derivTrace], {
-        title: wellName + " Water Breakthrough Diagnostics (Chan Log-Log Plot)",
-        xaxis: { title: "Elapsed Production Days", type: 'log' },
-        yaxis: { title: "WOR / WOR Derivative", type: 'log' },
-        margin: { t: 50, r: 50, b: 50, l: 60 }
+        title: { text: wellName + " Water Breakthrough Diagnostics (Chan Log-Log Plot)" },
+        xaxis: { title: { text: "Cumulative Producing Days" }, type: "log" },
+        yaxis: { title: { text: "WOR / WOR'" }, type: "log", exponentformat: "power" },
+        legend: { orientation: "h", y: -0.18 },
+        margin: { t: 50, r: 50, b: 70, l: 70 }
     });
 }
 </script>
+
 </body>
 </html>
