@@ -1,0 +1,29 @@
+body { font-family: Arial, sans-serif; margin: 40px; background: #f4f4f4; }
+h1 { color: #003366; }
+select { padding: 8px; font-size: 14px; margin-bottom: 20px; }
+
+nav { margin-bottom: 10px; }
+nav a { color: #003366; margin-right: 18px; text-decoration: none; font-weight: bold; }
+nav a:hover { text-decoration: underline; }
+nav a.active { color: #000; border-bottom: 2px solid #003366; }
+
+.dashboard { display: flex; gap: 15px; margin-bottom: 30px; flex-wrap: wrap; }
+.card { background: white; padding: 15px; border-radius: 8px; width: 220px; box-shadow: 0 2px 5px rgba(0,0,0,0.15); }
+.card h3 { margin-top: 0; color: #003366; }
+.card small { color: #666; }
+
+.plot { background: white; border-radius: 8px; padding: 10px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+.note { color: #444; font-size: 13px; max-width: 900px; margin: -8px 0 24px; }
+
+#errorBox { display: none; background: #ffe5e5; color: #990000; border: 1px solid #cc0000; padding: 12px; border-radius: 6px; margin-bottom: 20px; }
+
+.flag-high { color: red; font-weight: bold; }
+.flag-normal { color: green; font-weight: bold; }
+.flag-nodata { color: #666; font-weight: bold; }
+
+footer { color: #666; font-size: 12px; margin-top: 30px; }
+
+@media (max-width: 600px) {
+    body { margin: 16px; }
+    .card { width: 100%; }
+}
