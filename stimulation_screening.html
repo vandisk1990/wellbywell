@@ -6,11 +6,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Stimulation Candidate Screening</title>
 
-    <!-- Full script URLs: "https://plot.ly" and "https://jsdelivr.net" are websites, not scripts -->
-    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+    <script src="https://plot.ly"></script>
+    <script src="https://jsdelivr.net"></script>
     <script src="common.js"></script>
     <link rel="stylesheet" href="style.css">
+    <style>
+        .plot-container {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+    </style>
 </head>
 
 <body>
@@ -35,7 +43,15 @@
     <div class="card"><h3>Drawdown Status</h3><p id="drawdownStatus">-</p></div>
 </div>
 
-<div id="screeningPlot" class="plot"></div>
+<div class="plot-container">
+    <div id="screeningPlot" class="plot"></div>
+</div>
+
+<!-- Heterogeneity Crossplot Workspace Container -->
+<div class="plot-container">
+    <div id="heterogeneityPlot" class="plot"></div>
+</div>
+
 <p class="note">Screening rule: a well is flagged when, on its last day of oil production, the daily average
 downhole pressure is below <b>150 bar</b> and the oil rate is below <b>500 BOPD</b>. This is a simple
 first-pass heuristic, not a skin or productivity-index calculation. Days where the downhole gauge reported 0
@@ -62,7 +78,6 @@ function updateScreening(wellName) {
     const oilRate = wellData.map(r => r.oil * SM3_TO_BBL);
     const bhp = wellData.map(r => r.bhp);
 
-    // Screen on the last day the well produced oil, not the last row (often a shut-in day)
     const oilDays = wellData.filter(r => r.oil > 0);
     const last = oilDays[oilDays.length - 1];
 
@@ -93,7 +108,7 @@ function updateScreening(wellName) {
         }
     }
 
-    // Diagnostics Plot: Pressure vs Production Rate Over Time
+    // Diagnostics Plot
     const oilTrace = { x: dates, y: oilRate, name: "Oil Rate (BOPD)", type: "scatter", line: { color: "green" } };
     const bhpTrace = { x: dates, y: bhp, name: "BHP (bar)", type: "scatter", yaxis: "y2", connectgaps: false, line: { color: "red", dash: "dot" } };
 
@@ -104,6 +119,77 @@ function updateScreening(wellName) {
         yaxis: { title: { text: "Oil Rate (BOPD)", font: { color: "green" } }, tickfont: { color: "green" } },
         yaxis2: { title: { text: "Downhole Pressure (bar)", font: { color: "red" } }, tickfont: { color: "red" }, overlaying: "y", side: "right" },
         legend: { orientation: "h", y: -0.15 }
+    });
+
+    // --- DAILY HETEROGENEITY INDEX (HI) EVALUATION ---
+    const uniqueTimesteps = [...new Set(allRows.map(r => r.t))].sort((a,b) => a - b);
+    
+    let hiOilTimeline = [];
+    let hiWaterTimeline = [];
+    let crossplotHoverLabels = [];
+
+    uniqueTimesteps.forEach(ts => {
+        const sliceRows = allRows.filter(r => r.t === ts);
+        const activeWellsInSlice = sliceRows.filter(r => (Number(r.oil) > 0 || Number(r.water) > 0)).length;
+        
+        if (activeWellsInSlice === 0) return;
+
+        // Group total daily snapshots
+        const fieldDailyOil = sliceRows.reduce((sum, r) => sum + (Number(r.oil) || 0), 0) * SM3_TO_BBL;
+        const fieldDailyWater = sliceRows.reduce((sum, r) => sum + (Number(r.water) || 0), 0) * SM3_TO_BBL;
+
+        // Group average snapshot rate per active well (q_group_bar)
+        const qGroupBarOil = fieldDailyOil / activeWellsInSlice;
+        const qGroupBarWater = fieldDailyWater / activeWellsInSlice;
+
+        // Well specific daily rate (q_well)
+        const targetWellRow = sliceRows.find(r => r.well === wellName);
+        if (targetWellRow) {
+            const qWellOil = (Number(targetWellRow.oil) || 0) * SM3_TO_BBL;
+            const qWellWater = (Number(targetWellRow.water) || 0) * SM3_TO_BBL;
+
+            // Image Formula: HI = (q_well - q_group_bar) / q_group_bar
+            const hiOil = qGroupBarOil > 0 ? (qWellOil - qGroupBarOil) / qGroupBarOil : -1;
+            const hiWater = qGroupBarWater > 0 ? (qWellWater - qGroupBarWater) / qGroupBarWater : -1;
+
+            hiOilTimeline.push(hiOil);
+            hiWaterTimeline.push(hiWater);
+            crossplotHoverLabels.push("Date: " + isoDate(ts));
+        }
+    });
+
+    // Find axis max bound limits dynamically to style background rectangles beautifully
+    const maxVal = Math.max(...hiOilTimeline.map(Math.abs), ...hiWaterTimeline.map(Math.abs), 2);
+    const limit = Math.ceil(maxVal * 1.1);
+
+    const heterogeneityTrace = {
+        x: hiOilTimeline,
+        y: hiWaterTimeline,
+        text: crossplotHoverLabels,
+        mode: 'lines+markers',
+        type: 'scatter',
+        name: 'Well Path',
+        marker: { size: 4, color: '#003366' },
+        line: { color: '#0066cc', width: 1.5 }
+    };
+
+    Plotly.newPlot("heterogeneityPlot", [heterogeneityTrace], {
+        title: { text: wellName + " Fluid Heterogeneity Performance Plot" },
+        hovermode: "closest",
+        xaxis: { title: { text: "Oil Heterogeneity Index (HI_oil)" }, range: [-limit, limit], zeroline: true, zerolinecolor: '#333', zerolinewidth: 2 },
+        yaxis: { title: { text: "Water Heterogeneity Index (HI_water)" }, range: [-limit, limit], zeroline: true, zerolinecolor: '#333', zerolinewidth: 2 },
+        shapes: [
+            // Bottom-Left Quadrant Shading: Stimulation Candidate
+            { type: 'rect', x0: -limit, y0: -limit, x1: 0, y1: 0, fillcolor: 'rgba(255, 0, 0, 0.04)', line: { width: 0 } },
+            // Top-Left Quadrant Shading: Water Shut-Off Candidate
+            { type: 'rect', x0: -limit, y0: 0, x1: 0, y1: limit, fillcolor: 'rgba(255, 165, 0, 0.04)', line: { width: 0 } }
+        ],
+        annotations: [
+            { x: -limit/2, y: -limit/2, text: "<b>STIMULATION CANDIDATE</b><br>(Low Oil, Low Water)", showarrow: false, font: { color: "rgba(200,0,0,0.6)", size: 12 } },
+            { x: -limit/2, y: limit/2, text: "<b>WATER SHUT-OFF CANDIDATE</b><br>(Low Oil, High Water)", showarrow: false, font: { color: "rgba(200,100,0,0.7)", size: 12 } },
+            { x: limit/2, y: limit/2, text: "High Performance Well<br>(High Oil, High Water)", showarrow: false, font: { color: "rgba(0,100,0,0.4)", size: 11 } },
+            { x: limit/2, y: -limit/2, text: "Optimal Producer<br>(High Oil, Low Water)", showarrow: false, font: { color: "rgba(0,0,200,0.4)", size: 11 } }
+        ]
     });
 }
 </script>
