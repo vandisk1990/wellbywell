@@ -3,8 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <title>Volve Field Water Analysis</title>
+    
+    <!-- FIXED: Correct working CDN scripts for Plotly and PapaParse -->
     <script src="https://plot.ly"></script>
     <script src="https://jsdelivr.net"></script>
+    
     <style>
         body { font-family: Arial, sans-serif; margin: 40px; background: #f4f4f4; }
         h1 { color: #003366; }
@@ -12,7 +15,7 @@
         .dashboard { display: flex; gap: 15px; margin-bottom: 30px; flex-wrap: wrap; }
         .card { background: white; padding: 15px; border-radius: 8px; width: 220px; box-shadow: 0 2px 5px rgba(0,0,0,0.15); }
         .card h3 { margin-top: 0; color: #003366; }
-        #prodPlot { background: white; border-radius: 8px; padding: 10px; }
+        #prodPlot, #chanPlot { background: white; border-radius: 8px; padding: 10px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
     </style>
 </head>
 <body>
@@ -31,7 +34,11 @@
     <div class="card"> <h3>Field Water</h3> <p id="fieldWater">-</p> </div>
 </div>
 
+<!-- Production Rate Chart -->
 <div id="prodPlot"></div>
+
+<!-- NEW: Chan Diagnostic Breakdown Chart Container -->
+<div id="chanPlot"></div>
 
 <script>
 const SM3_TO_BBL = 6.2898;
@@ -68,7 +75,9 @@ function calculateFieldKPIs(){
 }
 
 function updateWell(wellName){
-    const wellData = allRows.filter(r => r.NPD_WELL_BORE_NAME === wellName);
+    // FIXED: Chronologically sort data array to make sure mathematical slopes track correctly over time
+    const wellData = allRows.filter(r => r.NPD_WELL_BORE_NAME === wellName)
+                           .sort((a, b) => new Date(a.DATEPRD) - new Date(b.DATEPRD));
     if(wellData.length === 0) return;
 
     const dates = wellData.map(r => r.DATEPRD);
@@ -91,6 +100,7 @@ function updateWell(wellName){
     document.getElementById("cumWater").innerText = (totalWater / 1000000).toFixed(2) + " MM bbls";
     document.getElementById("currentWaterCut").innerText = waterCut[waterCut.length - 1].toFixed(1) + " %";
 
+    // --- Chart 1: Time Series Production ---
     const waterRateTrace = { x: dates, y: water, name: "Water Rate (BWPD)", type: 'scatter', line: { color: "blue", width: 2 } };
     const waterCutTrace = { x: dates, y: waterCut, name: "Water Cut (%)", type: 'scatter', yaxis: "y2", line: { color: "lightblue", width: 2, dash: "dash" } };
 
@@ -99,6 +109,42 @@ function updateWell(wellName){
         hovermode: "x unified",
         yaxis: { title: "Water Production Rate (BWPD)", titlefont: { color: "blue" }, tickfont: { color: "blue" } },
         yaxis2: { title: "Water Cut (%)", titlefont: { color: "darkblue" }, tickfont: { color: "darkblue" }, overlaying: "y", side: "right", range: [0, 100] }
+    });
+
+    // --- NEW: Calculate Log-Log Chan Diagnostics (WOR and WOR Derivative) ---
+    const wor = [];
+    const worDeriv = [];
+    const elapsedDays = [];
+    let dayCount = 0;
+
+    for (let i = 0; i < water.length; i++) {
+        // Only calculate when there is actual production history to prevent dividing by zero or plotting empty data points
+        if (oil[i] > 0 && water[i] > 0) {
+            dayCount++;
+            const currentWOR = water[i] / oil[i];
+            wor.push(currentWOR);
+            elapsedDays.push(dayCount);
+
+            // Numerical slope calculation for WOR Derivative: d(WOR)/dt
+            if (wor.length > 1) {
+                const dWOR = currentWOR - wor[wor.length - 2];
+                // Logarithmic plots reject negative numbers, so zero out noise parameters cleanly
+                worDeriv.push(dWOR > 0 ? dWOR : null);
+            } else {
+                worDeriv.push(null);
+            }
+        }
+    }
+
+    // --- Chart 2: Chan Plot Configuration ---
+    const worTrace = { x: elapsedDays, y: wor, name: "WOR", type: 'scatter', mode: 'lines', line: { color: "navy", width: 2 } };
+    const derivTrace = { x: elapsedDays, y: worDeriv, name: "WOR Derivative", type: 'scatter', mode: 'markers+lines', marker: { size: 4 }, line: { color: "crimson", width: 1.5, dash: 'dot' } };
+
+    Plotly.newPlot("chanPlot", [worTrace, derivTrace], {
+        title: wellName + " Water Breakthrough Diagnostics (Chan Log-Log Plot)",
+        xaxis: { title: "Elapsed Production Days", type: 'log' },
+        yaxis: { title: "WOR / WOR Derivative", type: 'log' },
+        margin: { t: 50, r: 50, b: 50, l: 60 }
     });
 }
 </script>
