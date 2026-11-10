@@ -189,7 +189,7 @@ function drawHeterogeneity(wellName) {
         hiEl.innerText = "No comparable months";
         hiEl.className = "flag-nodata";
         Plotly.newPlot("heterogeneityPlot", [], {
-            title: { text: wellName + " Fluid Heterogeneity Performance Plot" },
+            title: { text: wellName + " Heterogeneity Index Plot" },
             annotations: [{ text: "No months where this well and at least one other producer were both flowing", showarrow: false, xref: "paper", yref: "paper", x: 0.5, y: 0.5 }],
             xaxis: { visible: false }, yaxis: { visible: false }
         });
