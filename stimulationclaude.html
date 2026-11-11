@@ -235,7 +235,7 @@ function drawHeterogeneity(wellName) {
     const quadrantLabel = (x, y, qd) => ({ x, y, text: "<b>" + qd.label + "</b><br>(" + qd.note + ")", showarrow: false, font: { color: qd.color, size: 11 } });
 
     Plotly.newPlot("heterogeneityPlot", [contextTrace, pathTrace, latestTrace], {
-        title: { text: wellName + " Fluid Heterogeneity Performance Plot" },
+        title: { text: wellName + " Heterogeneity Index Plot" },
         hovermode: "closest",
         xaxis: { title: { text: "Oil Heterogeneity Index (HI oil)" }, range: [xMin, xMax], zeroline: true, zerolinecolor: "#333", zerolinewidth: 2 },
         yaxis: { title: { text: "Water Heterogeneity Index (HI water)" }, range: [yMin, yMax], zeroline: true, zerolinecolor: "#333", zerolinewidth: 2 },
