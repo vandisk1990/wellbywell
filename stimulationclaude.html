@@ -108,7 +108,7 @@ function updateScreening(wellName) {
     const bhpTrace = { x: dates, y: bhp, name: "BHP (bar)", type: "scatter", yaxis: "y2", connectgaps: false, line: { color: "red", dash: "dot" } };
 
     Plotly.newPlot("screeningPlot", [oilTrace, bhpTrace], {
-        title: { text: wellName + " Diagnostic Screening Parameters" },
+        title: { text: wellName + " Oil and Downhole Pressure Profile" },
         hovermode: "x unified",
         xaxis: { type: "date" },
         yaxis: { title: { text: "Oil Rate (BOPD)", font: { color: "green" } }, tickfont: { color: "green" } },
